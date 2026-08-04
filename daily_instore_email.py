@@ -82,9 +82,9 @@ def send_email(subject: str, body: str) -> None:
 def main():
     try:
         count = get_instore_count(SALE_URL)
-        subject = f"Bike Connection Sale: {count} In Store"
+        subject = f"Bike Connection Sales Bike Count: {count}"
         body = (
-            f"Today's In Store sale item count: {count}\n\n"
+            f"Today's sales bike count: {count}\n\n"
             f"Source: {SALE_URL}"
         )
     except Exception as exc:
