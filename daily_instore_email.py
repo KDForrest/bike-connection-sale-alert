@@ -24,7 +24,9 @@ import os
 import re
 import smtplib
 import sys
+from datetime import datetime
 from email.mime.text import MIMEText
+from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
@@ -80,6 +82,17 @@ def send_email(subject: str, body: str) -> None:
 
 
 def main():
+    # Two cron triggers fire every day (one for PST, one for PDT) because
+    # GitHub Actions cron is always UTC and doesn't shift for daylight
+    # saving. Only proceed if it's genuinely ~10am Pacific right now, so
+    # exactly one of the two triggers actually sends each day.
+    # A manual "Run workflow" click always sends, for easy testing.
+    is_manual_run = os.environ.get("GITHUB_EVENT_NAME") != "schedule"
+    pacific_hour = datetime.now(ZoneInfo("America/Los_Angeles")).hour
+    if not is_manual_run and pacific_hour != 10:
+        print(f"Skipping: it's {pacific_hour}:00 Pacific, not the 10am trigger.")
+        return
+
     try:
         count = get_instore_count(SALE_URL)
         subject = f"Bike Connection Sales Bike Count: {count}"
