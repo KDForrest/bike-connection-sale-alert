@@ -1,0 +1,35 @@
+name: Daily In Store Count Email
+
+on:
+  schedule:
+    # Runs at 14:00 UTC every day = 7:00 AM Pacific Standard Time.
+    # During Pacific Daylight Time this becomes 7:00 AM PDT automatically
+    # ONLY if you adjust the UTC hour with the clock change (cron is
+    # always UTC and does not shift for daylight saving on its own).
+    # 14:00 UTC -> 6:00 AM PDT (Mar-Nov), 7:00 AM PST (Nov-Mar) roughly.
+    # Adjust the hour below to taste.
+    - cron: "0 14 * * *"
+  # Lets you manually trigger a run from the GitHub Actions tab to test.
+  workflow_dispatch:
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scrape and send email
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python daily_instore_email.py
