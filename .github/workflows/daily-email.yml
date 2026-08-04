@@ -1,15 +1,15 @@
-name: Daily In Store Count Email
+name: Daily Sales Bike Count Email
 
 on:
   schedule:
-    # Runs at 14:00 UTC every day = 7:00 AM Pacific Standard Time.
-    # During Pacific Daylight Time this becomes 7:00 AM PDT automatically
-    # ONLY if you adjust the UTC hour with the clock change (cron is
-    # always UTC and does not shift for daylight saving on its own).
-    # 14:00 UTC -> 6:00 AM PDT (Mar-Nov), 7:00 AM PST (Nov-Mar) roughly.
-    # Adjust the hour below to taste.
-    - cron: "0 14 * * *"
-  # Lets you manually trigger a run from the GitHub Actions tab to test.
+    # Cron always runs in UTC and never shifts for daylight saving, but
+    # Pacific Time does -- so we schedule TWO triggers, one for each
+    # possible UTC offset, and let the Python script itself check the
+    # real Pacific time and skip sending unless it's actually ~10am there.
+    - cron: "0 18 * * *"   # 10:00 AM PST (UTC-8, Nov-Mar)
+    - cron: "0 17 * * *"   # 10:00 AM PDT (UTC-7, Mar-Nov)
+  # Lets you manually trigger a run from the GitHub Actions tab to test
+  # (manual runs always send, regardless of the time check).
   workflow_dispatch:
 
 jobs:
@@ -32,4 +32,5 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python daily_instore_email.py
