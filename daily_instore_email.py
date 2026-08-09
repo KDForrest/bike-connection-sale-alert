@@ -35,8 +35,20 @@ from bs4 import BeautifulSoup
 SALE_URL = "https://www.bikeconnection.net/product-list/sale-pg515/"
 SENDER_EMAIL = os.environ["GMAIL_ADDRESS"]
 APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
-RECIPIENT_EMAIL = os.environ["RECIPIENT_EMAIL"]
+# RECIPIENT_EMAIL can be one address or several, comma-separated, e.g.
+# "dad@example.com, you@example.com"
+RECIPIENT_EMAILS = [
+    addr.strip()
+    for addr in os.environ["RECIPIENT_EMAIL"].split(",")
+    if addr.strip()
+]
 # --------------------------------------------------
+
+# File that remembers the date (YYYY-MM-DD, Pacific time) the email was
+# last sent, so a delayed or repeated hourly check-in doesn't send twice
+# -- and a late trigger still sends, instead of being skipped outright.
+MARKER_FILE = "last_sent_date.txt"
+SEND_AFTER_HOUR = 10  # Pacific hour after which the daily email is due
 
 HEADERS = {
     "User-Agent": (
@@ -74,24 +86,44 @@ def send_email(subject: str, body: str) -> None:
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = SENDER_EMAIL
-    msg["To"] = RECIPIENT_EMAIL
+    msg["To"] = ", ".join(RECIPIENT_EMAILS)
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(SENDER_EMAIL, APP_PASSWORD)
-        server.sendmail(SENDER_EMAIL, [RECIPIENT_EMAIL], msg.as_string())
+        server.sendmail(SENDER_EMAIL, RECIPIENT_EMAILS, msg.as_string())
+
+
+def already_sent_today(today_str: str) -> bool:
+    if not os.path.exists(MARKER_FILE):
+        return False
+    with open(MARKER_FILE, "r") as f:
+        return f.read().strip() == today_str
+
+
+def mark_sent_today(today_str: str) -> None:
+    with open(MARKER_FILE, "w") as f:
+        f.write(today_str)
 
 
 def main():
-    # Two cron triggers fire every day (one for PST, one for PDT) because
-    # GitHub Actions cron is always UTC and doesn't shift for daylight
-    # saving. Only proceed if it's genuinely ~10am Pacific right now, so
-    # exactly one of the two triggers actually sends each day.
-    # A manual "Run workflow" click always sends, for easy testing.
+    # The workflow checks in every hour (schedule triggers can be delayed
+    # or occasionally dropped by GitHub, so we don't rely on hitting one
+    # exact minute). Each check-in looks at the real Pacific time and
+    # sends the email the FIRST time it's at or after the target hour,
+    # then remembers today's date in a marker file so later check-ins
+    # the same day don't send a duplicate.
+    # A manual "Run workflow" click always sends immediately, for testing.
     is_manual_run = os.environ.get("GITHUB_EVENT_NAME") != "schedule"
-    pacific_hour = datetime.now(ZoneInfo("America/Los_Angeles")).hour
-    if not is_manual_run and pacific_hour != 10:
-        print(f"Skipping: it's {pacific_hour}:00 Pacific, not the 10am trigger.")
-        return
+    pacific_now = datetime.now(ZoneInfo("America/Los_Angeles"))
+    today_str = pacific_now.date().isoformat()
+
+    if not is_manual_run:
+        if pacific_now.hour < SEND_AFTER_HOUR:
+            print(f"Skipping: it's {pacific_now.hour}:00 Pacific, too early.")
+            return
+        if already_sent_today(today_str):
+            print(f"Skipping: already sent today ({today_str}).")
+            return
 
     try:
         count = get_instore_count(SALE_URL)
@@ -105,7 +137,8 @@ def main():
         body = f"The daily scrape script hit an error:\n\n{exc}"
 
     send_email(subject, body)
-    print(f"Email sent to {RECIPIENT_EMAIL}: {subject}")
+    mark_sent_today(today_str)
+    print(f"Email sent to {', '.join(RECIPIENT_EMAILS)}: {subject}")
 
 
 if __name__ == "__main__":
