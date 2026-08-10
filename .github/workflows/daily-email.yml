@@ -2,16 +2,19 @@ name: Daily Sales Bike Count Email
 
 on:
   schedule:
-    # GitHub's cron scheduler can occasionally delay or silently drop an
-    # exact-time trigger (especially on low-activity repos), so instead of
-    # betting on two precise daily times, we check in every hour. The
-    # Python script itself checks the real Pacific time and only sends
-    # when it's actually ~10am there -- every other hourly check-in just
-    # exits immediately without emailing.
+    # GitHub's cron scheduler can delay or occasionally drop an exact-time
+    # trigger (especially on low-activity repos), so we check in every
+    # hour instead of betting on one precise daily time. The Python
+    # script tracks whether it already sent today in a marker file, so
+    # it sends once -- at the first check-in at or after 10am Pacific --
+    # even if that check-in itself arrives late.
     - cron: "0 * * * *"   # every hour, on the hour (UTC)
   # Lets you manually trigger a run from the GitHub Actions tab to test
-  # (manual runs always send, regardless of the time check).
+  # (manual runs always send immediately, regardless of time/marker).
   workflow_dispatch:
+
+permissions:
+  contents: write   # needed to commit the "already sent today" marker file
 
 jobs:
   send-email:
@@ -35,3 +38,15 @@ jobs:
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python daily_instore_email.py
+
+      - name: Save "already sent today" marker
+        run: |
+          if [ -n "$(git status --porcelain last_sent_date.txt)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add last_sent_date.txt
+            git commit -m "Mark daily email sent for $(cat last_sent_date.txt)"
+            git push
+          else
+            echo "No new send today -- nothing to commit."
+          fi
