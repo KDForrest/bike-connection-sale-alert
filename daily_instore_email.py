@@ -1,7 +1,8 @@
 """
-Scrapes the "In Store" sale-item count from Bike Connection and emails
-it via Gmail. Meant to be run once a day by a scheduled task (Windows
-Task Scheduler) or a launchd job / cron (Mac).
+Scrapes the sale-item counts by category (Bikes, Accessories, Parts,
+Clothing, etc.) from Bike Connection's "Categories" filter on the Sale
+page, and emails them via Gmail. Meant to be run once a day by a
+scheduled task (Windows Task Scheduler) or a launchd job / cron (Mac).
 
 SETUP (one-time):
 1. pip install requests beautifulsoup4
@@ -59,27 +60,49 @@ HEADERS = {
 }
 
 
-def get_instore_count(url: str) -> int:
+def get_category_counts(url: str) -> "dict[str, int]":
+    """Scrape the "Categories" filter block on the Sale page (Bikes,
+    Accessories, Parts, Clothing, ...) and return {label: count},
+    e.g. {"Bikes": 118, "Accessories": 14, "Parts": 6, "Clothing": 3}.
+
+    NOTE: this is the "Categories" facet, not "Availability" / "In
+    Store" -- "In Store" only reflects items available in the physical
+    shop right now, not the true count of sale items per category.
+    """
     resp = requests.get(url, headers=HEADERS, timeout=20)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    availability_block = soup.find(id=re.compile(r"Facets-availability", re.I))
-    search_scope = availability_block if availability_block else soup
+    categories_block = soup.find(id=re.compile(r"Facets-categories", re.I))
+    if categories_block is None:
+        # Don't fall back to scraping the whole page here -- without a
+        # scoped block, unrelated numbers elsewhere on the page (nav,
+        # prices, etc.) could get misread as category counts. Better to
+        # fail loudly (main() emails a "scrape FAILED" alert) than to
+        # silently send wrong numbers.
+        raise ValueError("Could not find the 'Categories' filter block on this page.")
 
-    candidates = search_scope.find_all(string=re.compile(r"In\s*Store", re.I))
-    for text_node in candidates:
-        container = text_node.parent
-        full_text = container.get_text(" ", strip=True)
-        match = re.search(r"In\s*Store\D*(\d+)", full_text, re.I)
-        if match:
-            return int(match.group(1))
+    # Strip heading/toggle text (e.g. a "Categories" button/legend) so it
+    # doesn't get glued onto the first category label below -- without
+    # this, "Categories" + "Bikes (118)" can merge into one bad label.
+    for heading in categories_block.find_all(["h1", "h2", "h3", "h4", "legend", "button"]):
+        heading.extract()
 
-    match = re.search(r"In\s*Store\D{0,20}?(\d+)", resp.text, re.I)
-    if match:
-        return int(match.group(1))
+    full_text = categories_block.get_text(" ", strip=True)
+    # Extra safety net in case the heading wasn't in one of the tags
+    # above (e.g. it's a <span> or <div> instead of h2/legend/button).
+    full_text = re.sub(r"^\s*Categories\b", "", full_text, flags=re.I)
 
-    raise ValueError("Could not find an 'In Store' count on this page.")
+    counts: "dict[str, int]" = {}
+    for label, number in re.findall(r"([A-Za-z][A-Za-z&'\- ]*?)\s*\((\d+)\)", full_text):
+        label = label.strip()
+        if label and label.lower() != "categories":
+            counts.setdefault(label, int(number))
+
+    if not counts:
+        raise ValueError("Could not find any category counts on this page.")
+
+    return counts
 
 
 def send_email(subject: str, body: str) -> None:
@@ -126,10 +149,13 @@ def main():
             return
 
     try:
-        count = get_instore_count(SALE_URL)
-        subject = f"Bike Connection Sales Bike Count: {count}"
+        counts = get_category_counts(SALE_URL)
+        summary = ", ".join(f"{label} {count}" for label, count in counts.items())
+        subject = f"Bike Connection Sale Counts: {summary}"
+        lines = "\n".join(f"{label}: {count}" for label, count in counts.items())
         body = (
-            f"Today's sales bike count: {count}\n\n"
+            "Today's sale counts by category:\n\n"
+            f"{lines}\n\n"
             f"Source: {SALE_URL}"
         )
     except Exception as exc:
